@@ -151,3 +151,92 @@ The key takeaway here isn't to always rely on the bootstrap method. In many inst
 
 
 
+
+
+## Problem3 
+
+```{r}
+birthweight_df = 
+  read_csv("birthweight.csv") %>% 
+  janitor::clean_names() %>% 
+  mutate(
+    babysex = as.factor(babysex),
+    frace = as.factor(frace),
+    malform = as.factor(malform),
+    mrace = as.factor(mrace)
+  ) 
+
+birthweight_df
+
+purrr::map(birthweight_df, ~ sum(is.na(.)))
+
+```
+This dataset comprises `r nrow(birthweight_df)` rows and `r ncol(birthweight_df)` columns, with all data points present and accounted for.
+
+Referencing a Wikipedia article [Low Birth Weight](https://en.wikipedia.org/wiki/Low_birth_weight), it is noted that certain maternal factors such as younger maternal age, increased number of births, and a history of delivering low birth weight (LBW) infants can affect an infant's birth weight. Drawing from this insight, variables like the mother's age, the number of previous live births, and the number of prior LBW infants have been integrated into the analysis.
+
+Factors like the length of the pregnancy and any congenital malformations are also logically related to birth weight, which justifies their inclusion in the model.
+
+Furthermore, the study aims to examine the influence of sociodemographic elements on birth weight. This led to the addition of variables like the mother's race and the family's income level.
+
+```{r}
+model_fit_1 = lm(bwt ~ gaweeks + momage + mrace + malform + parity + fincome + pnumlbw, data = birthweight_df)
+
+birthweight_df %>% 
+  modelr::add_residuals(model_fit_1) %>%
+  modelr::add_predictions(model_fit_1) %>% 
+  ggplot(aes(x = pred, y = resid)) + 
+  geom_point(alpha = 0.3) +
+  geom_smooth(se = F, color = "red", method = "lm")
+  labs(
+    title = "Predicted vs. Residuals",
+    x = "Predicted",
+    y = "Residuals"
+    ) +
+  theme(plot.title = element_text(hjust = 0.5))
+
+# Fit models
+model_2 = lm(bwt ~ gaweeks + blength, data = birthweight_df)
+model_3 = lm(bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = birthweight_df)
+```
+
+
+```{r}
+# Cross validation
+cv_df = 
+  crossv_mc(birthweight_df, 100) %>% 
+  mutate(
+    train = map(train, as_tibble),
+    test = map(test, as_tibble)
+  )
+
+cv_df = 
+  cv_df %>% 
+  mutate(
+   model_fit_1 = map(.x = train, ~lm(bwt ~ gaweeks + momage + mrace + malform + parity + fincome + pnumlbw, data = .x)),
+   model_2 = map(.x = train, ~lm(bwt ~ gaweeks + blength, data = .x)),
+   model_3 = map(.x = train, ~lm(bwt ~ bhead + blength + babysex + bhead * blength + bhead * babysex + blength * babysex + bhead * blength * babysex, data = .x))
+  ) %>% 
+  mutate(
+    rmse_model1 = map2_dbl(.x = model_fit_1, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_model2 = map2_dbl(.x = model_2, .y = test, ~rmse(model = .x, data = .y)),
+    rmse_model3 = map2_dbl(.x = model_3, .y = test, ~rmse(model = .x, data = .y))
+  )
+
+# Violin plots 
+cv_df %>% 
+  select(starts_with("rmse")) %>% 
+  pivot_longer(
+    everything(),
+    names_to = "model",
+    values_to = "rmse",
+    names_prefix = "rmse_"
+  ) %>% 
+  ggplot(aes(x = model, y = rmse)) +
+  geom_violin()
+```
+
+The plot displaying the Root Mean Square Error (RMSE) indicates that among the three evaluated models, Model 3 is the most effective, as shown by its minimal RMSE. Surprisingly, Model 1, which was based on data from Wikipedia, did not correlate well with the actual data, casting doubt on the reliability of Wikipedia for this context.
+
+Model 3 incorporates factors like head circumference, length, and sex, as well as all their interactive effects, which include the three-way interaction between these variables.
+
