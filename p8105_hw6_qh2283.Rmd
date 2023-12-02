@@ -5,8 +5,149 @@ date: "2023-12-01"
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(viridis)
+library(modelr)
+
+knitr::opts_chunk$set(
+	echo = TRUE,
+	warning = FALSE,
+	fig.width = 8, 
+  fig.height = 6,
+  out.width = "90%"
+)
+
+options(
+  ggplot2.continuous.colour = "viridis",
+  ggplot2.continuous.fill = "viridis"
+)
+
+scale_colour_discrete = scale_colour_viridis_d
+scale_fill_discrete = scale_fill_viridis_d
+
+theme_set(theme_minimal() + theme(legend.position = "bottom"))
+```
+Problem2
+```{r}
+
+weather_df = 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |>
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |>
+  select(name, id, everything())
+
 ```
 
-Problem2
+
+
+```{r}
+
+library(tidyverse)
+library(patchwork)
+library(modelr)
+library(mgcv)
+
+```
+
+
+## Problem1
+
+## Problem2
+
+```{r}
+#Download the data
+weather_df <- 
+  rnoaa::meteo_pull_monitors(
+    c("USW00094728"),
+    var = c("PRCP", "TMIN", "TMAX"), 
+    date_min = "2022-01-01",
+    date_max = "2022-12-31") |> 
+  mutate(
+    name = recode(id, USW00094728 = "CentralPark_NY"),
+    tmin = tmin / 10,
+    tmax = tmax / 10) |> 
+  select(name, id, everything())
+
+```
+
+After loading the data, we clean it up 
+
+```{r df_clean}
+
+# selects relevant columns and renames Central Park to cp_ny for simplicity
+strapped_weather_df <- weather_df %>% 
+  select(name, tmax, tmin) %>% 
+  mutate(
+    name = str_replace(name, "CentralPark_NY", "cp_ny")
+  ) %>% 
+  bootstrap(n = 5000) %>%                                 
+  mutate(
+    model = map(strap, ~lm(tmax ~ tmin, data = .x)),     
+    result = map(model, broom::tidy),                    
+    stat = map(model, broom::glance)                    
+  )
+
+# a cleaned and filtered df containing variables of interest
+clean_weather_strap <- strapped_weather_df %>% 
+  select(-model, -strap) %>%                              # removed the original strap sample and model
+  rename("strap_run" = .id) %>%                           
+  unnest() %>%                                           
+  select(strap_run, term, estimate, adj.r.squared) %>%   
+  mutate(
+    term = case_when(term == "(Intercept)" ~ "beta0",     # renamed intercept to beta0
+                     term == "tmin" ~ "beta1",            # renamed slope to beta1
+                     TRUE ~ as.character(term))
+  ) %>% 
+  pivot_wider(names_from = term,                         
+              values_from = estimate) %>% 
+  mutate(
+    estimate_log = log(beta0 * beta1)                    
+  ) %>% 
+  janitor::clean_names()
+
+```
+
+Following the cleaning and bootstrapping process, the dataset `clean_weather_strap`, which consists of `r nrow(clean_weather_strap)` entries, comprises variables such as `adj_r_squared`, `beta0`, `beta1`, and `estimate_log` for each iteration of the bootstrap (`strap_run`). The distributions of these variables will be explored through the use of density plots.
+
+```{r density_plots}
+
+# density plot of r-squared with 2.5% and 97.5% quantile labeled
+r_squared_plot <- clean_weather_strap %>% 
+  ggplot(aes(x = adj_r_squared)) +
+  geom_density(color = "yellow", fill = "yellow", alpha = 0.3) +
+  geom_vline(xintercept = c(quantile(pull(clean_weather_strap, adj_r_squared), probs = 0.025),
+                            quantile(pull(clean_weather_strap, adj_r_squared), probs = 0.975)),
+             linetype = "dashed",
+             color = "red") +
+  labs(x = "Adjusted R-squared",
+       y = "Frequency",
+       caption = "Distribution of adjusted R-squared (left) and ln(β̂1 * β̂) (right)")
+
+# density plot of ln(beta0 * beta1) with 2.5% and 97.5% quantile labeled
+estimate_log_plot <- clean_weather_strap %>% 
+  ggplot(aes(x = estimate_log)) +
+  geom_density(color = "lightblue", fill = "lightblue", alpha = 0.3) +
+  geom_vline(xintercept = c(quantile(pull(clean_weather_strap, estimate_log), probs = 0.025),
+                            quantile(pull(clean_weather_strap, estimate_log), probs = 0.975)),
+             linetype = "dashed",
+             color = "red") +
+  labs(x = "ln(β̂1 * β̂0)",
+       y = "Frequency")
+
+# use patchwork to print them side-by-side
+r_squared_plot + estimate_log_plot
+
+```
+
+Similar to the distribution of \(r^2\), this distribution also exhibits a degree of skewness and includes some outliers.
+
+The key takeaway here isn't to always rely on the bootstrap method. In many instances, it's feasible to determine "large sample" distributions for unusual parameters, values, or summaries, which are quite valuable. However, it's beneficial to understand that bootstrap offers a solution for conducting inferences in more challenging scenarios.
+
+
 
